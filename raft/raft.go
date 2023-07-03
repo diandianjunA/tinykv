@@ -16,7 +16,6 @@ package raft
 
 import (
 	"errors"
-
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -165,14 +164,45 @@ func newRaft(c *Config) *Raft {
 		panic(err.Error())
 	}
 	// Your Code Here (2A).
-	return nil
+	r := &Raft{
+		id:               c.ID,
+		Term:             0,
+		Vote:             0,
+		RaftLog:          newLog(c.Storage),
+		Prs:              make(map[uint64]*Progress),
+		State:            StateFollower,
+		votes:            make(map[uint64]bool),
+		msgs:             make([]pb.Message, 0),
+		Lead:             0,
+		heartbeatTimeout: c.HeartbeatTick,
+		electionTimeout:  c.ElectionTick,
+		heartbeatElapsed: 0,
+		electionElapsed:  0,
+		leadTransferee:   0,
+		PendingConfIndex: 0,
+	}
+	for _, peer := range c.peers {
+		r.Prs[peer] = &Progress{0, 0}
+	}
+	r.becomeFollower(0, 0)
+	return r
 }
 
 // sendAppend sends an append RPC with new entries (if any) and the
 // current commit index to the given peer. Returns true if a message was sent.
 func (r *Raft) sendAppend(to uint64) bool {
 	// Your Code Here (2A).
-	return false
+	if r.Lead != r.id {
+		return false
+	}
+	//m := &pb.Message{
+	//	MsgType: pb.MessageType_MsgAppend,
+	//	To:      to,
+	//	From:    r.id,
+	//	Term:    r.Term,
+	//	LogTerm: r.RaftLog.LastIndex()+1,
+	//
+	//}
 }
 
 // sendHeartbeat sends a heartbeat RPC to the given peer.

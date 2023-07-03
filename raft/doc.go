@@ -45,7 +45,7 @@ To restart a node from previous state:
   // snapshot, state and entries.
   storage.ApplySnapshot(snapshot)
   storage.SetHardState(state)
-  storage.Append(entries)
+  storage.Append(entries)+++++
 
   c := &Config{
     ID:              0x01,
