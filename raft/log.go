@@ -18,9 +18,9 @@ import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 
 // RaftLog manage the log entries, its struct look like:
 //
-//  snapshot/first.....applied....committed....stabled.....last
-//  --------|------------------------------------------------|
-//                            log entries
+//	snapshot/first.....applied....committed....stabled.....last
+//	--------|------------------------------------------------|
+//	                          log entries
 //
 // for simplify the RaftLog implement should manage all log entries
 // that not truncated
@@ -50,13 +50,26 @@ type RaftLog struct {
 	pendingSnapshot *pb.Snapshot
 
 	// Your Data Here (2A).
+	logIndex uint64
 }
 
 // newLog returns log using the given storage. It recovers the log
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
-	return nil
+	firstIndex, _ := storage.FirstIndex()
+	lastIndex, _ := storage.LastIndex()
+	entries, _ := storage.Entries(firstIndex, lastIndex+1)
+	initialState, _, _ := storage.InitialState()
+	return &RaftLog{
+		storage:         storage,
+		entries:         entries,
+		logIndex:        firstIndex,
+		committed:       initialState.Commit,
+		applied:         firstIndex - 1,
+		stabled:         lastIndex,
+		pendingSnapshot: nil,
+	}
 }
 
 // We need to compact the log entries in some point of time like
@@ -71,29 +84,39 @@ func (l *RaftLog) maybeCompact() {
 // note, this is one of the test stub functions you need to implement.
 func (l *RaftLog) allEntries() []pb.Entry {
 	// Your Code Here (2A).
-	return nil
+	return l.entries
 }
 
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
-	return nil
+	return l.entries[l.stabled-l.logIndex+1:]
 }
 
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
-	return nil
+	return l.entries[l.applied-l.logIndex+1 : l.committed-l.logIndex+1]
 }
 
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
-	return 0
+	return l.logIndex + uint64(len(l.entries)) - 1
 }
 
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
-	return 0, nil
+	if i < l.logIndex {
+		term, err := l.storage.Term(i)
+		return term, err
+	} else {
+		return l.entries[i-l.logIndex].Term, nil
+	}
+}
+
+func (l *RaftLog) appendEntry(p *pb.Entry) {
+	l.entries = append(l.entries, *p)
+	l.logIndex++
 }
