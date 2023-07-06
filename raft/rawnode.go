@@ -16,6 +16,7 @@ package raft
 
 import (
 	"errors"
+	"reflect"
 
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
@@ -77,10 +78,20 @@ type RawNode struct {
 // NewRawNode returns a new RawNode given configuration and a list of raft peers.
 func NewRawNode(config *Config) (*RawNode, error) {
 	// Your Code Here (2A).
+	raft := newRaft(config)
+	hardState := pb.HardState{
+		Term:   raft.Term,
+		Vote:   raft.Vote,
+		Commit: raft.RaftLog.committed,
+	}
+	softState := &SoftState{
+		Lead:      raft.Lead,
+		RaftState: raft.State,
+	}
 	rn := &RawNode{
 		Raft:          newRaft(config),
-		prevHardState: pb.HardState{},
-		prevSoftState: nil,
+		prevHardState: hardState,
+		prevSoftState: softState,
 	}
 	return rn, nil
 }
@@ -155,7 +166,24 @@ func (rn *RawNode) Ready() Ready {
 		Entries:          rn.Raft.RaftLog.unstableEntries(),
 		CommittedEntries: rn.Raft.RaftLog.nextEnts(),
 		Messages:         rn.Raft.msgs,
-		Snapshot:         *rn.Raft.RaftLog.pendingSnapshot,
+	}
+	softState := &SoftState{Lead: rn.Raft.Lead, RaftState: rn.Raft.State}
+	if !reflect.DeepEqual(softState, rn.prevSoftState) {
+		rd.SoftState = softState
+		rn.prevSoftState = softState
+	}
+	hardState := pb.HardState{
+		Term:   rn.Raft.Term,
+		Vote:   rn.Raft.Vote,
+		Commit: rn.Raft.RaftLog.committed,
+	}
+	if !reflect.DeepEqual(hardState, rn.prevHardState) {
+		rd.HardState = hardState
+	}
+	rn.Raft.msgs = make([]pb.Message, 0)
+	if !IsEmptySnap(rn.Raft.RaftLog.pendingSnapshot) {
+		rd.Snapshot = *rn.Raft.RaftLog.pendingSnapshot
+		rn.Raft.RaftLog.pendingSnapshot = nil
 	}
 	return rd
 }
@@ -168,7 +196,12 @@ func (rn *RawNode) HasReady() bool {
 	//判断是否有需要应用的快照
 	//判断是否有状态改变或持久化
 	//判断是否有需要持久化的条目
-	return len(rn.Raft.msgs) > 0 || len(rn.Raft.RaftLog.unstableEntries()) > 0 || rn.prevSoftState != nil || !IsEmptyHardState(rn.prevHardState) || len(rn.Raft.RaftLog.nextEnts()) > 0 || !IsEmptySnap(rn.Raft.RaftLog.pendingSnapshot)
+	hardState := pb.HardState{
+		Term:   rn.Raft.Term,
+		Vote:   rn.Raft.Vote,
+		Commit: rn.Raft.RaftLog.committed,
+	}
+	return len(rn.Raft.msgs) > 0 || (!isHardStateEqual(hardState, rn.prevHardState)) || len(rn.Raft.RaftLog.unstableEntries()) > 0 || len(rn.Raft.RaftLog.nextEnts()) > 0 || !IsEmptySnap(rn.Raft.RaftLog.pendingSnapshot)
 }
 
 // Advance notifies the RawNode that the application has applied and saved progress in the
@@ -176,9 +209,6 @@ func (rn *RawNode) HasReady() bool {
 func (rn *RawNode) Advance(rd Ready) {
 	// Your Code Here (2A).
 	//更新状态
-	if rd.SoftState != nil {
-		rn.prevSoftState = rd.SoftState
-	}
 	if !IsEmptyHardState(rd.HardState) {
 		rn.prevHardState = rd.HardState
 	}
@@ -191,8 +221,6 @@ func (rn *RawNode) Advance(rd Ready) {
 	}
 	//丢弃被压缩的日志
 	rn.Raft.RaftLog.maybeCompact()
-	rn.Raft.msgs = nil
-	rn.Raft.RaftLog.pendingSnapshot = nil
 }
 
 // GetProgress return the Progress of this node and its peers, if this

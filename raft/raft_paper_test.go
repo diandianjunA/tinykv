@@ -609,10 +609,10 @@ func TestFollowerCheckMessageType_MsgAppend2AB(t *testing.T) {
 	}
 }
 
-// TestFollowerAppendEntries tests that when AppendEntries RPC is valid,
-// the follower will delete the existing conflict entry and all that follow it,
-// and append any new entries not already in the log.
-// Also, it writes the new entry into stable storage.
+//TestFollowerAppendEntries tests that when AppendEntries RPC is valid,
+//the follower will delete the existing conflict entry and all that follow it,
+//and append any new entries not already in the log.
+//Also, it writes the new entry into stable storage.
 // Reference: section 5.3
 func TestFollowerAppendEntries2AB(t *testing.T) {
 	tests := []struct {

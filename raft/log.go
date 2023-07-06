@@ -50,7 +50,7 @@ type RaftLog struct {
 	pendingSnapshot *pb.Snapshot
 
 	// Your Data Here (2A).
-	logIndex uint64
+	LogIndex uint64
 }
 
 // newLog returns log using the given storage. It recovers the log
@@ -64,7 +64,7 @@ func newLog(storage Storage) *RaftLog {
 	return &RaftLog{
 		storage:         storage,
 		entries:         entries,
-		logIndex:        firstIndex,
+		LogIndex:        firstIndex,
 		committed:       initialState.Commit,
 		applied:         firstIndex - 1,
 		stabled:         lastIndex,
@@ -79,44 +79,78 @@ func (l *RaftLog) maybeCompact() {
 	// Your Code Here (2C).
 }
 
-// allEntries return all the entries not compacted.
-// note, exclude any dummy entries from the return value.
-// note, this is one of the test stub functions you need to implement.
+//allEntries return all the entries not compacted.
+//note, exclude any dummy entries from the return value.
+//note, this is one of the test stub functions you need to implement.
 func (l *RaftLog) allEntries() []pb.Entry {
 	// Your Code Here (2A).
-	return l.entries
+	//排除掉日志号小于起始日志号的日志
+	res := make([]pb.Entry, 0)
+	for _, entry := range l.entries {
+		if entry.Index >= l.LogIndex {
+			res = append(res, entry)
+		}
+	}
+	return res
 }
 
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
-	return l.entries[l.stabled-l.logIndex+1:]
+	//排除掉日志号小于已持久化的日志号的日志
+	if len(l.entries) <= 0 {
+		return nil
+	}
+	return l.entries[l.stabled-l.LogIndex+1:]
 }
 
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
-	return l.entries[l.applied-l.logIndex+1 : l.committed-l.logIndex+1]
+	//应用到状态机的日志号到已提交的日志号
+	if len(l.entries) <= 0 {
+		return nil
+	}
+	return l.entries[l.applied-l.LogIndex+1 : l.committed-l.LogIndex+1]
 }
 
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
-	return l.logIndex + uint64(len(l.entries)) - 1
+	var index uint64
+	if !IsEmptySnap(l.pendingSnapshot) {
+		index = l.pendingSnapshot.Metadata.Index
+	}
+	if len(l.entries) > 0 {
+		return max(l.entries[len(l.entries)-1].Index, index)
+	}
+	i, _ := l.storage.LastIndex()
+	return max(i, index)
 }
 
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
-	if i < l.logIndex {
-		term, err := l.storage.Term(i)
-		return term, err
-	} else {
-		return l.entries[i-l.logIndex].Term, nil
+	if len(l.entries) > 0 && i >= l.LogIndex {
+		return l.entries[i-l.LogIndex].Term, nil
 	}
+	term, err := l.storage.Term(i)
+	if err == ErrUnavailable && !IsEmptySnap(l.pendingSnapshot) {
+		if i == l.pendingSnapshot.Metadata.Index {
+			term = l.pendingSnapshot.Metadata.Term
+			err = nil
+		} else if i < l.pendingSnapshot.Metadata.Index {
+			err = ErrCompacted
+		}
+	}
+	return term, err
 }
 
 func (l *RaftLog) appendEntry(p *pb.Entry) {
 	l.entries = append(l.entries, *p)
-	l.logIndex++
+	l.LogIndex++
+}
+
+func (l *RaftLog) toSliceIndex(u uint64) int {
+	return int(u - l.LogIndex)
 }
