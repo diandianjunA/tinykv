@@ -77,11 +77,20 @@ func newLog(storage Storage) *RaftLog {
 // grow unlimitedly in memory
 func (l *RaftLog) maybeCompact() {
 	// Your Code Here (2C).
+	first, _ := l.storage.FirstIndex()
+	if first > l.LogIndex {
+		if len(l.entries) > 0 {
+			entries := l.entries[l.toSliceIndex(first):]
+			l.entries = make([]pb.Entry, len(entries))
+			copy(l.entries, entries)
+		}
+		l.LogIndex = first
+	}
 }
 
-//allEntries return all the entries not compacted.
-//note, exclude any dummy entries from the return value.
-//note, this is one of the test stub functions you need to implement.
+// allEntries return all the entries not compacted.
+// note, exclude any dummy entries from the return value.
+// note, this is one of the test stub functions you need to implement.
 func (l *RaftLog) allEntries() []pb.Entry {
 	// Your Code Here (2A).
 	//排除掉日志号小于起始日志号的日志
