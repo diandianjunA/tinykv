@@ -163,27 +163,15 @@ func (d *peerMsgHandler) preProposeRaftCommand(req *raft_cmdpb.RaftCmdRequest) e
 // 将上层命令打包成日志，然后提交给raft
 // 请求发过来的时候会附带一个回调函数，我们需要记录这个回调函数，等到raft日志提交之后，再调用这个回调函数
 func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
-	err := d.preProposeRaftCommand(msg)
-	if err != nil {
-		cb.Done(ErrResp(err))
-		return
-	}
-	// Your Code Here (2B).
-	// 判断是否是admin命令
-	if msg.AdminRequest != nil {
-		d.proposeAdminRequest(msg, cb)
-	} else {
-		d.proposeNormalRequest(msg, cb)
-	}
-	//d.proposals = append(d.proposals, &proposal{
-	//	index: d.nextProposalIndex(),
-	//	cb:    cb,
-	//	term:  d.Term(),
-	//})
-	//// 将命令打包成日志，然后提交给raft
-	//// 这里的日志是raft的日志，不是我们的日志
-	//data, _ := msg.Marshal()
-	//d.RaftGroup.Propose(data)
+	d.proposals = append(d.proposals, &proposal{
+		index: d.nextProposalIndex(),
+		cb:    cb,
+		term:  d.Term(),
+	})
+	// 将命令打包成日志，然后提交给raft
+	// 这里的日志是raft的日志，不是我们的日志
+	data, _ := msg.Marshal()
+	d.RaftGroup.Propose(data)
 }
 
 func (d *peerMsgHandler) onTick() {
@@ -744,7 +732,7 @@ func (d *peerMsgHandler) process(entry *eraftpb.Entry, wb *engine_util.WriteBatc
 		panic(err)
 	}
 	if len(msg.Requests) > 0 {
-		d.processNormalRequest(entry, msg, wb)
+		return d.processNormalRequest(entry, msg, wb)
 	}
 	if msg.AdminRequest != nil {
 		d.processAdminRequest(entry, msg, wb)

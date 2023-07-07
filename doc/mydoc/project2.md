@@ -2,6 +2,11 @@
 
 ## project2A
 
-实现raft基本功能
+1. 实现raft基本功能
+    - 领导选举（raft.go）
+    - 日志同步 (log.go)
 
-newRaft函数实现
+2. 与上层的接口（rawNode.go）
+
+### raft.go
+
