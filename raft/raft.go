@@ -348,12 +348,13 @@ func (r *Raft) becomeLeader() {
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
-	if _, ok := r.Prs[r.id]; !ok && m.MsgType == pb.MessageType_MsgTimeoutNow {
+	_, Next := r.Prs[r.id]
+	if m.MsgType == pb.MessageType_MsgTimeoutNow && !Next {
 		return nil
 	}
 	if m.Term > r.Term {
 		r.leadTransferee = None
-		r.becomeFollower(m.Term, None)
+		r.becomeFollower(m.Term, m.From)
 	}
 	switch r.State {
 	case StateFollower:
@@ -569,12 +570,10 @@ func (r *Raft) handleSnapshot(m pb.Message) {
 		})
 		return
 	}
-	r.becomeFollower(max(r.Term, m.Term), m.From)
-	first := meta.Index + 1
 	if len(r.RaftLog.entries) > 0 {
 		r.RaftLog.entries = nil
 	}
-	r.RaftLog.LogIndex = first
+	r.RaftLog.LogIndex = meta.Index + 1
 	r.RaftLog.applied = meta.Index
 	r.RaftLog.committed = meta.Index
 	r.RaftLog.stabled = meta.Index
@@ -596,11 +595,18 @@ func (r *Raft) handleSnapshot(m pb.Message) {
 // addNode add a new node to raft group
 func (r *Raft) addNode(id uint64) {
 	// Your Code Here (3A).
+	r.Prs[id] = &Progress{Match: 0, Next: 1}
+	r.PendingConfIndex = None
 }
 
 // removeNode remove a node from raft group
 func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
+	delete(r.Prs, id)
+	if r.State == StateLeader {
+		r.updateCommit()
+	}
+	r.PendingConfIndex = None
 }
 
 func (r *Raft) handleRequestVote(m pb.Message) {
@@ -717,8 +723,7 @@ func (r *Raft) handlerAppendEntriesResponse(m pb.Message) {
 		index := m.Index
 		logTerm := m.LogTerm
 		l := r.RaftLog
-		sliceIndex := sort.Search(len(l.entries),
-			func(i int) bool { return l.entries[i].Term > logTerm })
+		sliceIndex := sort.Search(len(l.entries), func(i int) bool { return l.entries[i].Term > logTerm })
 		if sliceIndex > 0 && l.entries[sliceIndex-1].Term == logTerm {
 			index = uint64(sliceIndex) + l.LogIndex
 		}
@@ -816,24 +821,22 @@ func (r *Raft) sendSnapshot(to uint64) {
 }
 
 func (r *Raft) handleTransferLeader(m pb.Message) {
-	if m.From == r.id {
+	if m.From == r.id || r.leadTransferee == m.From {
 		return
 	}
-	if r.leadTransferee != None && r.leadTransferee == m.From {
-		return
-	}
-	if _, ok := r.Prs[m.From]; !ok {
+	_, Next := r.Prs[m.From]
+	if !Next {
 		return
 	}
 	r.leadTransferee = m.From
-	if r.Prs[m.From].Match == r.RaftLog.LastIndex() {
-		msg := pb.Message{
+	lastIndex := r.RaftLog.LastIndex()
+	if r.Prs[m.From].Match != lastIndex {
+		r.sendAppend(m.From)
+	} else {
+		r.msgs = append(r.msgs, pb.Message{
 			MsgType: pb.MessageType_MsgTimeoutNow,
 			From:    r.id,
 			To:      m.From,
-		}
-		r.msgs = append(r.msgs, msg)
-	} else {
-		r.sendAppend(m.From)
+		})
 	}
 }

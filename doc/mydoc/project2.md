@@ -189,6 +189,64 @@ CommittedEntries 是已提交的日志条目到已持久化的日志条目，中
 
 ## project2B
 
+- proposeRaftCommand
+- HandleRaftReady
+- Append
+- SaveReadyState
+
+Request 执行流程
+
+![](./img/project2_8.png)
+![](./img/project2_9.png)
+
+Raft Worker接收到raft消息后，首先调用PeerMsgHandler的HandleMsg()来propose消息
+
+Propose的目的就是将这个Request以entry的形式放到Peer目前的RaftLog中，等到这个日志被大部分group commit之后，再通过HandleRftReady进行执行
+
+只有Leader才能处理这种propose请求
+
+### proposeRaftCommand
+
+将发来的request转换成raft的entry，然后发送给raft中的leader节点来处理
+
+使用的主要是msg.Marshal()和msg.Unmarshal()函数来进行转换，同时要把这个proposals放到Proposals中，等待raft处理完之后再进行回复
+
+### HandleRaftReady
+
+在raft处理完request之后，调用HandleRaftReady来处理一批已经被committed的entry
+
+流程如下
+
+1. 如果这个Peer已经被删除了，那么直接返回
+2. 判断一下rawNode中是否有需要处理的ready，如果有，则获取一个ready来处理
+3. 首先通过PeerStorage的SaveReadyState来保存一些状态，比如hardState，snapshot等
+4. 然后通过d.Send(d.ctx.trans, ready.Messages)将消息发送
+5. 然后对这次committed的entry进行应用
+6. 通过advance()来更新状态
+
+应用过程
+
+1. 通过Unmarshal函数把request从entry中解析出来
+2. 根据请求的类型来进行处理，Put和Delete的请求通过writeBatch写入到kv中，然后放入空的response。Get请求则从kv中读取数据，然后放入response中。snap请求则直接给它peer的region以为它开启一个供读的transaction
+3. 一个request中的所有请求都处理完成后，就可以认为这个entry已经被apply了，所以要把这个entry的index放入到appliedIndex中，然后返回
+
+### SaveReadyState
+
+将ready中的更新保存到磁盘中
+
+1. 首先判断一下是否有需要保存的snapshot，如果有，则调用ApplySnapshot来保存
+2. 然后判断一下是否有需要保存的hardState，如果有，则修改raft中的hardState
+3. 然后调用append将这个ready中的entries保存到raftLog中
+4. 最后将raft状态保存到raftStorage中
+
+### Append
+
+将ready中的entries保存到raftLog中
+
+### 测试通过
+
+![](./img/project2_13.png)
+
 ### 遇到的问题
 
 1. SaveReadyState保存时忘记把db放进去了，导致一直报空指针
@@ -202,3 +260,69 @@ CommittedEntries 是已提交的日志条目到已持久化的日志条目，中
 3. process函数中，在处理普通request时，要return返回的WriteBatch而不是传进去的wb
     ![](./img/project2_6.png)
     ![](./img/project2_7.png)
+
+## project2C
+
+由于在系统运行过程中，日志会无限增长，因此需要定期进行snapshot，将日志进行压缩，只保留最新的一部分日志
+
+![img](./img/project2_10.png)
+![img](./img/project2_11.png)
+
+### raft中
+
+增加一种处理MessageType_MsgSnapshot请求的操作
+
+1. 该方法首先从接收到的快照消息中提取元数据。
+```go
+meta := m.Snapshot.Metadata
+```
+2. 它检查快照的索引是否小于或等于已提交的最新日志条目的索引。如果是这样，它将附加一个类型为MessageType_MsgAppendResponse的消息到msgs列表中，并返回。
+3. 接下来，更新RaftLog的相关字段。将entry的开始索引设置为快照的索引加1，表示快照后第一个日志条目的索引。将applied、committed和stabled都设置为快照的索引。
+4. 创建一个空的Progress结构体的映射，用于表示每个对等节点的进度。根据快照元数据中的配置状态，为每个对等节点创建一个空的Progress结构体，并将其添加到Prs映射中。
+5. 将pendingSnapshot字段设置为接收到的快照。
+6. 最后，将一个带有MessageType_MsgAppendResponse类型的消息添加到msgs列表中。消息的Index字段设置为RaftLog的最后一个日志条目的索引。
+
+### peer_msg_handler中
+
+在本部分中，当日志增长超过 RaftLogGcCountLimit 的限制时，会要求本节点整理和删除已经应用到状态机的旧日志。节点会接收到类似于 Get/Put/Delete/Snap 命令的 CompactLogRequest，因此我们需要在 lab2b 的基础上，当包含 CompactLogRequest 的 entry 提交后，增加 processAdminRequest() 方法来对这类 adminRequest 的处理。
+
+在 processAdminRequest() 方法中，我们需要更新 RaftApplyState 中 RaftTruncatedState 中的相关元数据，记录最新截断的最后一个日志的 index 和 term，然后调用 ScheduleCompactLog() 方法，异步让 RaftLog-gc worker 能够进行旧日志删除的工作。
+
+另外，因为 raft 模块在处理 snapshot 相关的 msg 时，也会对一些状态进行修改，所以在 peer_storage.go 方法中，我们需要在 SaveReadyState() 方法中，调用 ApplySnapshot() 方法中，对相应的元数据进行保存。
+
+在 ApplySnapshot() 方法中，如果当前节点已经处理过的 entries 只是 snapshot 的一个子集，那么需要对 raftLocalState 中的 commit、lastIndex 以及 raftApplyState 中的 appliedIndex 等元数据进行更新，并调用 ClearData() 和 ClearMetaData() 方法，对现有的 stale 元数据以及日志进行清空整理。同时，也对 regionLocalState 进行相应更新。最后，我们需要通过 regionSched 这个 channel，将 snapshot 应用于对应的状态机
+
+除此之外，对于adminRequest的propose过程也与普通的读写请求有所不同，如AdminCmdType_Split需要判断splitKey是否在当前region中，同时为了应对project3中新加的另外两种请求，我们需要在peer_msg_handler.go中增加一个proposeAdminRequest()方法，用于处理这类命令请求。
+
+### 测试通过
+
+![](./img/project2_12.png)
+
+### 遇到的问题
+
+![](./img/project2_15.png)
+![](./img/project2_16.png)
+
+proposeRaftCommand中有一次改代码不小心把上面预先写好的一段代码给删了，导致了上面这种情况
+
+```go
+err := d.preProposeRaftCommand(msg)
+if err != nil {
+    cb.Done(ErrResp(err))
+    return
+}
+```
+
+![](./img/project2_14.png)
+
+proposeAdminRequest中，AdminCmdType_CompactLog请求不需要将proposal加到proposals中，因为它不需要回调函数，把它加进去会导致server一直在等待回调，从而导致请求超时
+
+![](./img/project2_17.png)
+![](./img/project2_18.png)
+
+
+忘记在advance中压缩日志，就会出现上面的情况
+```go
+//丢弃被压缩的日志
+rn.Raft.RaftLog.maybeCompact()
+```
