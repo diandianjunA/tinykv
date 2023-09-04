@@ -1,4 +1,4 @@
-# MutilRaft
+# MultiRaft
 
 这一节需要实现一个带有balance scheduler的基于multi-raft的kv服务器，需要实现领导人转移和成员变更，需要在raftstore上实现配置变更和region split，最后实现负载均衡调度器
 
