@@ -166,7 +166,46 @@ process过程中
 5. 调用 d.RaftGroup.ApplyConfChange() 方法，使消息传导到raft层调用add和remove方法
 6. 调用HeartbeatScheduler()方法，快速刷新 scheduler 那里的 region 缓存
 
+### Spilt
+
+
+
 ### 遇到的问题
 
 ![](./img/project3_4.png)
 remove peer的时候数组越界，找peerId的时候会出现没找到的情况，没找到的话就不remove了
+
+![](./img/project3_5.png)
+
+![](./img/project3_6.png)
+
+## Project3C
+
+### processRegionHeartbeat()
+
+在 processRegionHeartbeat() 收到汇报来的心跳，先检查一下 RegionEpoch 是否是最新的，如果是新的则调用 c.putRegion() 和 c.updateStoreStatusLocked() 进行更新。
+
+判断 RegionEpoch 是否最新的方法，官方文档里已经有说明。Version 和 ConfVer 均最大的，即为最新。
+
+### Schedule
+
+这一部分主要负责 region 的调度，从 region size 最大的 store 中取出一个 region 放到 region size 最小的 store 中。按如下流程处理即可。
+
+选出 suitableStores，并按照 regionSize 进行排序。SuitableStore 是那些满足 DownTime() 时间小于 MaxStoreDownTime 的 store。
+
+开始遍历 suitableStores，从 regionSize 最大的开始遍历，依次调用 GetPendingRegionsWithLock()，GetFollowersWithLock() 和 GetLeadersWithLock()。直到找到一个目标 region。如果实在找不到目标 region，直接放弃本次操作。
+
+判断目标 region 的 store 数量，如果小于 cluster.GetMaxReplicas()，直接放弃本次操作。
+
+再次从 suitableStores 开始遍历，这次从 regionSize 最小的开始遍历，选出一个目标 store，目标 store 不能在原来的 region 里面。如果目标 store 找不到，直接放弃。
+
+判断两个 store 的 regionSize 是否小于 2*ApproximateSize 。是的话直接放弃。
+
+调用 cluster.AllocPeer() 创建 peer，创建 CreateMovePeerOperator 操作，返回结果。
+
+### 通过
+![](./img/project3_7.png)
+
+### 遇到的问题
+![](./img/project3_8.png)
+Version 和 ConfVer 均最大的才为最新

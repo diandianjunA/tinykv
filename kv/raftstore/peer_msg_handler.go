@@ -718,7 +718,7 @@ func (d *peerMsgHandler) processConfChange(entry *eraftpb.Entry, cc *eraftpb.Con
 				n = i
 			}
 		}
-		if n == len(region.Peers) {
+		if n >= len(region.Peers) {
 			break
 		}
 		region.Peers = append(region.Peers[:n], region.Peers[n+1:]...)
